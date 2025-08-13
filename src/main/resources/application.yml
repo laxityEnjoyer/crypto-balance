@@ -2,17 +2,15 @@ server:
   port: 8080
 
 app:
-  chain: TRON
-  tokens:
-    - symbol: TRX
-      decimals: 6
-    - symbol: USDT
-      contract: TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t
-      decimals: 6
-  tron:
-    baseUrl: https://api.trongrid.io
-    apiKey: 7eef625a-cd9d-4b1e-9166-34fa9f161fe8
+  wallet-name: TRON
+  # Lista tokenów: "TRX,USDT:<contract>,USDC:<contract>,..."
+  tokens: "TRX,USDT:TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t"
+
+tron:
+  baseUrl: https://api.trongrid.io
+  apiKey: 7eef625a-cd9d-4b1e-9166-34fa9f161fe8
+
 cassandra:
   contactPoint: 127.0.0.1:9042
   keyspace: trx
-
+  localDc: datacenter1

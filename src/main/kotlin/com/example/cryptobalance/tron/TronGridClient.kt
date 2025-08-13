@@ -1,7 +1,6 @@
 package com.example.cryptobalance.tron
 
 import kotlinx.coroutines.reactor.awaitSingleOrNull
-import org.bitcoinj.core.Base58
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.http.HttpHeaders
 import org.springframework.http.MediaType
@@ -12,17 +11,20 @@ import java.math.BigInteger
 @Component
 class TronGridClient(
     builder: WebClient.Builder,
-    @Value("\${tron.baseUrl}") baseUrl: String,
-    @Value("\${tron.apiKey:}") private val apiKey: String
+    @Value("\${tron.baseUrl:https://api.trongrid.io}") private val baseUrl: String,
+    @Value("\${tron.apiKey:}") private val apiKey: String,
 ) {
     private val web: WebClient = builder
         .baseUrl(baseUrl)
-        // <-- bez nazwanych parametrów:
         .defaultHeader(HttpHeaders.ACCEPT, MediaType.APPLICATION_JSON_VALUE)
-        .apply { if (apiKey.isNotBlank()) defaultHeader("TRON-PRO-API-KEY", apiKey) }
+        .defaultHeaders { headers ->
+            if (apiKey.isNotBlank()) {
+                headers.add("TRON-PRO-API-KEY", apiKey)
+            }
+        }
         .build()
 
-    /** Zwraca saldo TRX (w SUN) z /v1/accounts/{address} */
+    /** Saldo TRX (w SUN) z /v1/accounts/{address} */
     suspend fun getTrxBalance(addressBase58: String): BigInteger {
         val resp = web.get()
             .uri("/v1/accounts/{addr}", addressBase58)
@@ -30,43 +32,29 @@ class TronGridClient(
             .bodyToMono(Map::class.java)
             .awaitSingleOrNull()
 
-        val data0 = ((resp?.get("data") as? List<*>)?.firstOrNull() as? Map<*, *>)
-        val balanceSun = (data0?.get("balance") as? Number)?.toLong() ?: 0L
-        return BigInteger.valueOf(balanceSun)
+        val balance = (resp?.get("balance") as? Number)?.toLong() ?: 0L
+        return BigInteger.valueOf(balance)
     }
 
-    /** Zwraca saldo tokenu TRC20 (BigInteger) przez /wallet/triggersmartcontract */
+    /** Saldo TRC20 przez /wallet/triggerconstantcontract -> hex -> BigInteger */
     suspend fun getTrc20Balance(contractBase58: String, holderBase58: String): BigInteger {
-        val holderEthHex = tronBase58ToEthHex(holderBase58)
-        val param = leftPad64(holderEthHex)
-
         val body = mapOf(
             "contract_address" to contractBase58,
-            "owner_address" to holderBase58,
             "function_selector" to "balanceOf(address)",
-            "parameter" to param,
+            "parameter" to holderBase58, // 'visible=true' pozwala używać base58
             "visible" to true
         )
 
         val resp = web.post()
-            .uri("/wallet/triggersmartcontract")
+            .uri("/wallet/triggerconstantcontract")
+            .contentType(MediaType.APPLICATION_JSON)
             .bodyValue(body)
             .retrieve()
             .bodyToMono(Map::class.java)
             .awaitSingleOrNull()
 
-        val hex = ((resp?.get("constant_result") as? List<*>)?.firstOrNull() as? String)
-            ?.removePrefix("0x").orEmpty()
-
-        return if (hex.isBlank()) BigInteger.ZERO else BigInteger(hex, 16)
+        val hex = (resp?.get("constant_result") as? List<*>)?.firstOrNull() as? String
+        if (hex.isNullOrBlank()) return BigInteger.ZERO
+        return BigInteger(hex, 16)
     }
-
-    // --- helpers ---
-    private fun tronBase58ToEthHex(base58: String): String {
-        val raw = Base58.decodeChecked(base58)               // wersja(1B) + payload(20B)
-        val payload20 = raw.copyOfRange(raw.size - 20, raw.size)
-        return payload20.joinToString("") { "%02x".format(it) }
-    }
-
-    private fun leftPad64(hex: String): String = hex.lowercase().padStart(64, '0')
 }
