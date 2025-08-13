@@ -7,19 +7,16 @@ import org.springframework.web.bind.annotation.*
 @RequestMapping("/system")
 class SystemBalanceController(private val svc: SystemBalanceService) {
 
-    @GetMapping("/{chain}/{address}")
+    @GetMapping("/{address}")
     fun systemBalanceAddress(
-        @PathVariable chain: String,
         @PathVariable address: String,
         @RequestParam block: Long
     ) = svc.balanceForAddress(chain, address, block)
 
-    @GetMapping("/{chain}/{address}/{token}")
+    @GetMapping("/{address}/{token}")
     fun systemBalanceAddressToken(
-        @PathVariable chain: String,
         @PathVariable address: String,
         @PathVariable token: String,
         @RequestParam block: Long
-    ) = svc.balanceForAddressToken(chain, address, token, block)
-
+    ) = svc.balanceForAddressToken(chain, address, token.uppercase(), block_number)
 }

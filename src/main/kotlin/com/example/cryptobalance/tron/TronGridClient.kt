@@ -1,8 +1,10 @@
 package com.example.cryptobalance.tron
 
-import kotlinx.coroutines.reactive.awaitSingle
+import kotlinx.coroutines.reactor.awaitSingleOrNull
 import org.bitcoinj.core.Base58
 import org.springframework.beans.factory.annotation.Value
+import org.springframework.http.HttpHeaders
+import org.springframework.http.MediaType
 import org.springframework.stereotype.Component
 import org.springframework.web.reactive.function.client.WebClient
 import java.math.BigInteger
@@ -10,47 +12,61 @@ import java.math.BigInteger
 @Component
 class TronGridClient(
     builder: WebClient.Builder,
-    @Value("\${app.tron.baseUrl}") baseUrl: String,
-    @Value("\${app.tron.apiKey:}") private val apiKey: String?
+    @Value("\${tron.baseUrl}") baseUrl: String,
+    @Value("\${tron.apiKey:}") private val apiKey: String
 ) {
     private val web: WebClient = builder
         .baseUrl(baseUrl)
-        .defaultHeaders { h -> if (!apiKey.isNullOrBlank()) h.add("TRON-PRO-API-KEY", apiKey) }
+        // <-- bez nazwanych parametrów:
+        .defaultHeader(HttpHeaders.ACCEPT, MediaType.APPLICATION_JSON_VALUE)
+        .apply { if (apiKey.isNotBlank()) defaultHeader("TRON-PRO-API-KEY", apiKey) }
         .build()
 
+    /** Zwraca saldo TRX (w SUN) z /v1/accounts/{address} */
     suspend fun getTrxBalance(addressBase58: String): BigInteger {
         val resp = web.get()
-            .uri { it.path("/walletsolidity/getaccount").queryParam("address", addressBase58).build() }
+            .uri("/v1/accounts/{addr}", addressBase58)
             .retrieve()
             .bodyToMono(Map::class.java)
-            .awaitSingle()
+            .awaitSingleOrNull()
 
-        val balance = (resp["balance"] as? Number)?.toLong() ?: 0L
-        return BigInteger.valueOf(balance) // SUN (1e-6 TRX)
+        val data0 = ((resp?.get("data") as? List<*>)?.firstOrNull() as? Map<*, *>)
+        val balanceSun = (data0?.get("balance") as? Number)?.toLong() ?: 0L
+        return BigInteger.valueOf(balanceSun)
     }
 
+    /** Zwraca saldo tokenu TRC20 (BigInteger) przez /wallet/triggersmartcontract */
     suspend fun getTrc20Balance(contractBase58: String, holderBase58: String): BigInteger {
-        val param = balanceOfParam(holderBase58)
+        val holderEthHex = tronBase58ToEthHex(holderBase58)
+        val param = leftPad64(holderEthHex)
+
         val body = mapOf(
             "contract_address" to contractBase58,
+            "owner_address" to holderBase58,
             "function_selector" to "balanceOf(address)",
             "parameter" to param,
             "visible" to true
         )
+
         val resp = web.post()
-            .uri("/walletsolidity/triggersmartcontract")
+            .uri("/wallet/triggersmartcontract")
             .bodyValue(body)
             .retrieve()
             .bodyToMono(Map::class.java)
-            .awaitSingle()
+            .awaitSingleOrNull()
 
-        val hex = ((resp["constant_result"] as? List<*>)?.firstOrNull() as? String) ?: "0"
-        return BigInteger(hex, 16)
+        val hex = ((resp?.get("constant_result") as? List<*>)?.firstOrNull() as? String)
+            ?.removePrefix("0x").orEmpty()
+
+        return if (hex.isBlank()) BigInteger.ZERO else BigInteger(hex, 16)
     }
 
-    private fun balanceOfParam(base58: String): String {
-        val decoded = Base58.decodeChecked(base58)   // 21 bajtów: 0x41 + 20B adresu
-        val addr20 = decoded.copyOfRange(1, 21)
-        return addr20.joinToString("") { "%02x".format(it) }.padStart(64, '0')
+    // --- helpers ---
+    private fun tronBase58ToEthHex(base58: String): String {
+        val raw = Base58.decodeChecked(base58)               // wersja(1B) + payload(20B)
+        val payload20 = raw.copyOfRange(raw.size - 20, raw.size)
+        return payload20.joinToString("") { "%02x".format(it) }
     }
+
+    private fun leftPad64(hex: String): String = hex.lowercase().padStart(64, '0')
 }

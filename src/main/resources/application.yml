@@ -11,8 +11,7 @@ app:
       decimals: 6
   tron:
     baseUrl: https://api.trongrid.io
-    # pozniej
-    apiKey: ${TRON_API_KEY:}
+    apiKey: 7eef625a-cd9d-4b1e-9166-34fa9f161fe8
 cassandra:
   contactPoint: 127.0.0.1:9042
   keyspace: trx

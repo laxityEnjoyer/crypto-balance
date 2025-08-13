@@ -1,33 +1,54 @@
-package com.example.cryptobalance.service
+package com.example.cryptobalance.repo
 
-import com.example.cryptobalance.repo.TxRepository
-import org.springframework.stereotype.Service
+import com.datastax.oss.driver.api.core.CqlSession
+import com.datastax.oss.driver.api.core.cql.PreparedStatement
+import org.springframework.beans.factory.annotation.Value
+import org.springframework.stereotype.Component
 import java.math.BigInteger
-import java.time.Instant
 
-data class SystemTokenBalance(val token: String, val amount: BigInteger)
-data class SystemBalanceResponse(
-    val chain: String,
-    val address: String,
-    val blockH: Long,
-    val balances: List<SystemTokenBalance>,
-    val checkedAt: Instant = Instant.now()
-)
+@Component
+class TxRepository(
+    private val session: CqlSession,
+    @Value("\${app.wallet-name:TRON}") private val walletName: String
+) {
 
-@Service
-class SystemBalanceService(private val repo: TxRepository) {
+    // SUM(amount) dla (wallet_name, token_name, address) do block_number <= H
+    // Uwaga: używa ALLOW FILTERING (działa, ale może być cięższe).
+    private val sumStmt: PreparedStatement = session.prepare(
+        """
+        SELECT amount FROM trx.transaction_address_amount
+        WHERE wallet_name = ? AND token_name = ? AND block_number <= ? AND address = ?
+        ALLOW FILTERING
+        """.trimIndent()
+    )
 
-    fun balanceForAddress(chain: String, address: String, blockH: Long): SystemBalanceResponse {
-        val tokens = repo.tokensForAddress(chain, address)
-        val balances = tokens.map { t ->
-            val sum = repo.sumAmount(chain, address, t, blockH)
-            SystemTokenBalance(t, sum)
-        }.sortedBy { it.token }
-        return SystemBalanceResponse(chain, address, blockH, balances)
+    // Lista tokenów, które występują dla danego address (w obrębie wallet_name)
+    private val tokensStmt: PreparedStatement = session.prepare(
+        """
+        SELECT DISTINCT token_name FROM trx.transaction_address_amount
+        WHERE wallet_name = ? AND address = ?
+        ALLOW FILTERING
+        """.trimIndent()
+    )
+
+    /** Zwraca listę tokenów (UPPERCASE) dla adresu. */
+    fun tokensForAddress(address: String): List<String> {
+        val rs = session.execute(tokensStmt.bind(walletName, address))
+        return rs.map { it.getString("token_name") }
+            .filterNotNull()
+            .map { it.uppercase() }
+            .distinct()
+            .sorted()
     }
 
-    fun balanceForAddressToken(chain: String, address: String, token: String, blockH: Long): SystemBalanceResponse {
-        val sum = repo.sumAmount(chain, address, token.uppercase(), blockH)
-        return SystemBalanceResponse(chain, address, blockH, listOf(SystemTokenBalance(token.uppercase(), sum)))
+    /** Suma amount (Cassandra bigint) do podanego bloku włącznie. */
+    fun sumAmount(address: String, token: String, upToBlock: Long): BigInteger {
+        var sum = BigInteger.ZERO
+        val rs = session.execute(sumStmt.bind(walletName, token.uppercase(), upToBlock, address))
+        for (row in rs) {
+            val v = row.getLong("amount") // bigint -> Long
+            sum = sum.add(BigInteger.valueOf(v))
+        }
+        return sum
     }
 }
