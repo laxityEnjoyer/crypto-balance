@@ -6,31 +6,21 @@ import org.springframework.stereotype.Component
 import java.math.BigInteger
 
 /**
- * Pracujemy na tabeli:
  * trx.transaction_address_amount(
- *   wallet_name text, token_name text, block_number bigint,
- *   address text, tx_hash text, amount bigint,
- *   PRIMARY KEY ((wallet_name, token_name), block_number, address, tx_hash)
+ *  wallet_name text, token_name text, block_number bigint,
+ *  address text, tx_hash text, amount bigint,
+ *  PRIMARY KEY ((wallet_name, token_name), block_number, address, tx_hash)
  * )
  */
 @Component
 class TxRepository(private val sess: CqlSession) {
 
-    // sumujemy amount do block_number <= ?
+    // Sumujemy amount do block_number <= ? (po pełnym kluczu partycji)
     private val sumStmt: PreparedStatement = sess.prepare(
         """
         SELECT address, amount
         FROM trx.transaction_address_amount
         WHERE wallet_name = ? AND token_name = ? AND block_number <= ?
-        """.trimIndent()
-    )
-
-    // lista tokenów, gdzie występuje dany address (devowo: ALLOW FILTERING)
-    private val tokensStmt: PreparedStatement = sess.prepare(
-        """
-        SELECT DISTINCT token_name, address
-        FROM trx.transaction_address_amount
-        WHERE wallet_name = ? AND address = ? ALLOW FILTERING
         """.trimIndent()
     )
 
@@ -42,17 +32,13 @@ class TxRepository(private val sess: CqlSession) {
     ): BigInteger {
         var sum = BigInteger.ZERO
         val rs = sess.execute(sumStmt.bind(walletName, token.uppercase(), upToBlock))
+        // nie można dodać address do WHERE (bo jest po block_number),
+        // więc filtrujemy po adresie już w kodzie:
         for (row in rs) {
             if (row.getString("address") == address) {
-                val v = row.getLong("amount") // bigint
-                sum = sum.add(BigInteger.valueOf(v))
+                sum = sum.add(BigInteger.valueOf(row.getLong("amount")))
             }
         }
         return sum
-    }
-
-    fun tokensForAddress(walletName: String, address: String): List<String> {
-        val rs = sess.execute(tokensStmt.bind(walletName, address))
-        return rs.map { it.getString("token_name")!! }.toList().distinct().sorted()
     }
 }

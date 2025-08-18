@@ -18,7 +18,7 @@ data class DiffResponse(
     val checkedAt: Instant = Instant.now()
 )
 
-/** Prosty parser "TRX,USDT:Contract,USDC:Contract" → mapa token→contract (TRX ma null) */
+// parser "TRX,USDT:Contract,USDC:Contract" → mapa token→contract (TRX ma null)
 private fun parseTokens(src: String): Map<String, String?> =
     src.split(",")
         .mapNotNull { it.trim().takeIf { s -> s.isNotEmpty() } }

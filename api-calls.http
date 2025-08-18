@@ -22,7 +22,5 @@ Content-Type: application/json
   "visible": true
 }
 
-### --- Punkty końcowe naszej aplikacji (do uzupełnienia) ---
-
 ### (3) Sprawdzenie salda dla konkretnego adresu i tokena
 # GET http://localhost:8080/check/tron/TKMw3VYpiw3baCtUCM2HYYEDPJUTFw5D32/USDT

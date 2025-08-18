@@ -1,9 +1,13 @@
-server:
-  port: 8080
-
 app:
-  wallet-name: TRON
-  # Lista tokenów: "TRX,USDT:<contract>,USDC:<contract>,..."
+  # domyślny wallet (używany jeśli wallet_name albo brak parametru)
+  wallet-name: mt-ZUZIAWAL-NILETES-6985
+
+  # LISTA portfeli do zsumowania gdy wywołanie o ALL
+  wallets:
+    - mt-ZUZIAWAL-NILETES-6985
+    - PROD-TRON-1
+    - PROD-TRON-2
+
   tokens: "TRX,USDT:TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t"
 
 tron:

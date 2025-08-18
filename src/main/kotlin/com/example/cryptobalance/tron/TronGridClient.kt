@@ -24,7 +24,7 @@ class TronGridClient(
         }
         .build()
 
-    /** Saldo TRX (w SUN) z /v1/accounts/{address} */
+    /// Saldo TRX (w SUN) z /v1/accounts/{address}
     suspend fun getTrxBalance(addressBase58: String): BigInteger {
         val resp = web.get()
             .uri("/v1/accounts/{addr}", addressBase58)
@@ -36,7 +36,7 @@ class TronGridClient(
         return BigInteger.valueOf(balance)
     }
 
-    /** Saldo TRC20 przez /wallet/triggerconstantcontract -> hex -> BigInteger */
+    // Saldo TRC20 przez /wallet/triggerconstantcontract -> hex -> BigInteger
     suspend fun getTrc20Balance(contractBase58: String, holderBase58: String): BigInteger {
         val body = mapOf(
             "contract_address" to contractBase58,
