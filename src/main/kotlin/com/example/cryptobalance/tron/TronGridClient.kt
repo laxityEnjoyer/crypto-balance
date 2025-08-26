@@ -11,19 +11,30 @@ import java.math.BigInteger
 import java.util.Base64
 import java.util.Arrays
 import kotlin.experimental.and
+import java.time.Duration
+import io.netty.channel.ChannelOption
+import io.netty.resolver.DefaultAddressResolverGroup
+import org.springframework.http.client.reactive.ReactorClientHttpConnector
+import reactor.netty.http.client.HttpClient
 
 @Component
 class TronGridClient(
     builder: WebClient.Builder,
     @Value("\${tron.baseUrl:https://api.trongrid.io}") private val baseUrl: String,
     @Value("\${tron.apiKey:}") private val apiKey: String,
-    @Value("\${tron.trxBaseUrl:}") private val trxBaseUrl: String,
-
-    ) {
+    @Value("\${tron.trxBaseUrl:\${tron.baseUrl:https://api.trongrid.io}}") private val trxBaseUrl: String,
+) {
     private val log = LoggerFactory.getLogger(TronGridClient::class.java)
 
-    private val web: WebClient = builder
-        .baseUrl(trxBaseUrl)
+    private val httpClient: HttpClient = HttpClient.create()
+        .resolver(DefaultAddressResolverGroup.INSTANCE) // użyj systemowego DNS resolvera
+        .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, 15_000) // connect timeout
+        .responseTimeout(Duration.ofSeconds(20)) // timeout odpowiedzi
+
+    // WebClient do TronGrid (TRC20 itp.)
+    private val webGrid: WebClient = builder
+        .clientConnector(ReactorClientHttpConnector(httpClient))
+        .baseUrl(baseUrl)
         .defaultHeader(HttpHeaders.ACCEPT, MediaType.APPLICATION_JSON_VALUE)
         .defaultHeaders { headers ->
             if (apiKey.isNotBlank()) {
@@ -32,21 +43,32 @@ class TronGridClient(
         }
         .build()
 
-    // Saldo TRX (SUN) na konkretnym bloku przez /wallet/getaccount + block_identifier
+    // WebClient do noda (TRX z blokiem po hash/number)
+    private val webNode: WebClient = builder
+        .clientConnector(ReactorClientHttpConnector(httpClient))
+        .baseUrl(trxBaseUrl)
+        .defaultHeader(HttpHeaders.ACCEPT, MediaType.APPLICATION_JSON_VALUE)
+        .build()
+
+    // --- TRX: saldo na konkretnym bloku z użyciem block hash + number ---
     suspend fun getTrxBalanceAt(addressBase58: String, blockNumber: Long): BigInteger {
+        val hash = getBlockHash(blockNumber)
+
         val body = mapOf(
-            "address" to addressBase58,
-            "visible" to true,
+            "account_identifier" to mapOf(
+                "address" to addressBase58
+            ),
             "block_identifier" to mapOf(
-                "hash" to "none",
+                "hash" to hash,
                 "number" to blockNumber
-            )
+            ),
+            "visible" to true
         )
 
-        log.info("POST {}/wallet/getaccount body={}", trxBaseUrl, body)
+        log.info("POST {} /wallet/getaccountbalance body={}", trxBaseUrl, body)
 
-        val resp = web.post()
-            .uri("/wallet/getaccount")
+        val resp = webNode.post()
+            .uri("/wallet/getaccountbalance")
             .contentType(MediaType.APPLICATION_JSON)
             .bodyValue(body)
             .retrieve()
@@ -57,9 +79,36 @@ class TronGridClient(
         return BigInteger.valueOf(balance)
     }
 
+    // Pobranie hash bloku po numerze przez baseUrl (Trongrid)
+    private suspend fun getBlockHash(blockNumber: Long): String {
+        val body = mapOf(
+            "id_or_num" to blockNumber.toString(),
+            "detail" to false
+        )
+        log.info("POST {} /wallet/getblock body={}", baseUrl, body)
+
+        val resp = webGrid.post()
+            .uri("/wallet/getblock")
+            .contentType(MediaType.APPLICATION_JSON)
+            .headers { headers ->
+                if (apiKey.isNotBlank()) {
+                    headers.set("TRON-PRO-API-KEY", apiKey)
+                }
+            }
+            .bodyValue(body)
+            .retrieve()
+            .bodyToMono(Map::class.java)
+            .timeout(Duration.ofSeconds(15)) // czas na odpowiedź z bloku
+            .awaitSingleOrNull()
+
+        val hash = resp?.get("blockID") as? String
+        require(!hash.isNullOrBlank()) { "Nie udało się pobrać hash dla bloku $blockNumber" }
+        return hash
+    }
+
     /// Saldo TRX (w SUN) - bieżące (pozostawione dla kompatybilności)
     suspend fun getTrxBalance(addressBase58: String): BigInteger {
-        val resp = web.get()
+        val resp = webGrid.get()
             .uri("/v1/accounts/{addr}", addressBase58)
             .retrieve()
             .bodyToMono(Map::class.java)
@@ -83,7 +132,7 @@ class TronGridClient(
 
         log.info("POST {} /wallet/triggerconstantcontract body={}", baseUrl, body)
 
-        val resp = web.post()
+        val resp = webGrid.post()
             .uri("/wallet/triggerconstantcontract")
             .contentType(MediaType.APPLICATION_JSON)
             .bodyValue(body)
