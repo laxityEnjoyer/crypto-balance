@@ -17,11 +17,13 @@ class TronGridClient(
     builder: WebClient.Builder,
     @Value("\${tron.baseUrl:https://api.trongrid.io}") private val baseUrl: String,
     @Value("\${tron.apiKey:}") private val apiKey: String,
-) {
+    @Value("\${tron.trxBaseUrl:}") private val trxBaseUrl: String,
+
+    ) {
     private val log = LoggerFactory.getLogger(TronGridClient::class.java)
 
     private val web: WebClient = builder
-        .baseUrl(baseUrl)
+        .baseUrl(trxBaseUrl)
         .defaultHeader(HttpHeaders.ACCEPT, MediaType.APPLICATION_JSON_VALUE)
         .defaultHeaders { headers ->
             if (apiKey.isNotBlank()) {
@@ -30,7 +32,32 @@ class TronGridClient(
         }
         .build()
 
-    /// Saldo TRX (w SUN) z /v1/accounts/{address}
+    // Saldo TRX (SUN) na konkretnym bloku przez /wallet/getaccount + block_identifier
+    suspend fun getTrxBalanceAt(addressBase58: String, blockNumber: Long): BigInteger {
+        val body = mapOf(
+            "address" to addressBase58,
+            "visible" to true,
+            "block_identifier" to mapOf(
+                "hash" to "none",
+                "number" to blockNumber
+            )
+        )
+
+        log.info("POST {}/wallet/getaccount body={}", trxBaseUrl, body)
+
+        val resp = web.post()
+            .uri("/wallet/getaccount")
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue(body)
+            .retrieve()
+            .bodyToMono(Map::class.java)
+            .awaitSingleOrNull()
+
+        val balance = (resp?.get("balance") as? Number)?.toLong() ?: 0L
+        return BigInteger.valueOf(balance)
+    }
+
+    /// Saldo TRX (w SUN) - bieżące (pozostawione dla kompatybilności)
     suspend fun getTrxBalance(addressBase58: String): BigInteger {
         val resp = web.get()
             .uri("/v1/accounts/{addr}", addressBase58)
@@ -42,16 +69,15 @@ class TronGridClient(
         return BigInteger.valueOf(balance)
     }
 
-    // Saldo TRC20 przez /wallet/triggerconstantcontract -> hex -> BigInteger
+    // Saldo TRC20 przez /wallet/triggerconstantcontract -> hex -> BigInteger (bieżący stan)
     suspend fun getTrc20Balance(contractBase58: String, holderBase58: String): BigInteger {
-        // ABI-encoded parameter dla balanceOf(address)
         val paramHex = abiEncodeAddressParameter(holderBase58)
 
         val body = mapOf(
             "contract_address" to contractBase58,
             "function_selector" to "balanceOf(address)",
             "parameter" to paramHex,
-            "owner_address" to holderBase58, // opcjonalnie: adres wywołującego (Base58, bo visible=true)
+            "owner_address" to holderBase58,
             "visible" to true
         )
 
@@ -73,20 +99,17 @@ class TronGridClient(
         return BigInteger(hex, 16)
     }
 
-    // Helper: Base58Check → 20 bajtów adresu (bez prefiksu 0x41), potem ABI (32 bajty, lewostronne zera)
     private fun abiEncodeAddressParameter(addressBase58: String): String {
         val addrBytesWithPrefix = decodeBase58Check(addressBase58)
         require(addrBytesWithPrefix.size == 21 && addrBytesWithPrefix[0] == 0x41.toByte()) {
             "Invalid Tron address"
         }
-        val addr20 = addrBytesWithPrefix.copyOfRange(1, 21) // 20 bytes, bez 0x41
+        val addr20 = addrBytesWithPrefix.copyOfRange(1, 21)
         val word = ByteArray(32)
-        // skopiuj 20 bajtów na koniec 32-bajtowego słowa
         System.arraycopy(addr20, 0, word, 12, 20)
         return word.joinToString(separator = "") { "%02x".format(it) }
     }
 
-    // Minimalna implementacja Base58Check dla Tron (BTC alphabet)
     private fun decodeBase58Check(input: String): ByteArray {
         val alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
         var num = BigInteger.ZERO
@@ -96,13 +119,10 @@ class TronGridClient(
             require(idx >= 0) { "Invalid Base58 char: $ch" }
             num = num.multiply(base).add(BigInteger.valueOf(idx.toLong()))
         }
-        // liczba w big-endian
         var bytes = num.toByteArray()
         if (bytes.size > 0 && bytes[0] == 0.toByte()) {
-            // usuń znak
             bytes = bytes.copyOfRange(1, bytes.size)
         }
-        // liczba wiodących '1' -> wiodące zera
         val leadingZeros = input.takeWhile { it == '1' }.length
         val withLeading = ByteArray(leadingZeros) + bytes
         require(withLeading.size >= 4) { "Too short for checksum" }
