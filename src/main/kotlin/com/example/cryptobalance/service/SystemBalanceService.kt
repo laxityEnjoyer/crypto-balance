@@ -19,43 +19,36 @@ data class SystemBalanceResponse(
 @Service
 class SystemBalanceService(
     private val repo: TxRepository,
-    @Value("\${app.wallet-name:TRON}") private val defaultWallet: String
+    @Value("\${app.wallet-name:TRON}") private val defaultChain: String
 ) {
 
-    /**
-     * Wszystkie tokeny dla adresu – lista tokenów pochodzi z konfiguracji lub stałej.
-     * Jeśli nie masz jeszcze endpointu /system/{address} (bez tokena), możesz tymczasowo
-     * zasilić to stałą listą, np. TRX i USDT.
-     */
     fun balanceForAddress(address: String, blockNumber: Long): SystemBalanceResponse {
-        val wallet = defaultWallet
-        val tokens = listOf("TRX", "USDT")   // lub wczytanie z app.tokens
+        val chain = defaultChain
+        val tokens = listOf("TRX", "USDT")
 
         val balances = tokens.map { t ->
-            val sum = repo.sumAmountForAddress(wallet, address, t, blockNumber)
+            val sum = repo.sumAmountForAddress(chain, address, t, blockNumber)
             SystemTokenBalance(token = t, amount = sum)
-        }.filter { it.amount != BigInteger.ZERO } // opcjonalnie
+        }.filter { it.amount != BigInteger.ZERO }
 
         return SystemBalanceResponse(
-            chain = wallet,
+            chain = chain,
             address = address,
             block_number = blockNumber,
             balances = balances
         )
     }
 
-    /**
-     * Tylko jeden token dla adresu (endpoint /system/{address}/{token}).
-     */
     fun balanceForAddressToken(address: String, token: String, blockNumber: Long): SystemBalanceResponse {
-        val wallet = defaultWallet
-        val sum = repo.sumAmountForAddress(wallet, address, token.uppercase(), blockNumber)
+        val chain = defaultChain
+        val sum = repo.sumAmountForAddress(chain, address, token.uppercase(), blockNumber)
 
         return SystemBalanceResponse(
-            chain = wallet,
+            chain = chain,
             address = address,
             block_number = blockNumber,
             balances = listOf(SystemTokenBalance(token = token.uppercase(), amount = sum))
         )
     }
 }
+

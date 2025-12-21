@@ -1,6 +1,6 @@
 app:
   # domyślny wallet (używany jeśli wallet_name albo brak parametru)
-  wallet-name: mt-ZUZIAWAL-NILETES-6985
+  wallet-name: TRON
 
   # LISTA portfeli do zsumowania gdy wywołanie o ALL
   wallets:
