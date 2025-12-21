@@ -43,8 +43,8 @@ class BalanceCheckService(
         val sym = token.uppercase()
         val system = repo.sumAmountForAddress(walletName, address, sym, blockNumber)
         val onchain = when (val contract = tokens[sym]) {
-            null -> tron.getTrxBalance(address)                     // TRX
-            else -> tron.getTrc20Balance(contract, address)         // TRC20
+            null -> tron.getTrxBalanceAt(address, blockNumber)       // TRX na danym bloku
+            else -> tron.getTrc20Balance(contract, address)          // TRC20 (bieżący stan)
         }
         val delta = onchain.subtract(system)
         return DiffResponse(walletName, address, sym, blockNumber, system, onchain, delta)
