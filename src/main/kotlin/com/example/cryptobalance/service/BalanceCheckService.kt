@@ -37,10 +37,14 @@ class BalanceCheckService(
     @Value("\${app.wallet-name:TRON}") private val walletName: String,
     @Value("\${app.tokens:TRX}") tokensProp: String
 ) {
+    private val log = org.slf4j.LoggerFactory.getLogger(BalanceCheckService::class.java)
     private val tokens: Map<String, String?> = parseTokens(tokensProp)
 
     suspend fun diffForAddressToken(address: String, token: String, blockNumber: Long): DiffResponse {
         val sym = token.uppercase()
+
+        log.info("Sprawdzanie diff dla {} [{}] na bloku {}...", address, sym, blockNumber)
+
         val system = repo.sumAmountForAddress(walletName, address, sym, blockNumber)
         val onchain = when (val contract = tokens[sym]) {
             null -> tron.getTrxBalanceAt(address, blockNumber)       // TRX na danym bloku

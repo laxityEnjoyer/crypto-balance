@@ -12,7 +12,6 @@ app:
 
 tron:
   baseUrl: https://api.trongrid.io
-  apiKey: 7eef625a-cd9d-4b1e-9166-34fa9f161fe8
   trxBaseUrl: http://13.228.119.63:8090
 
 cassandra:

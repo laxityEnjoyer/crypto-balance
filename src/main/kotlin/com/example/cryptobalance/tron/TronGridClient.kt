@@ -50,7 +50,7 @@ class TronGridClient(
         .defaultHeader(HttpHeaders.ACCEPT, MediaType.APPLICATION_JSON_VALUE)
         .build()
 
-    // --- TRX: saldo na konkretnym bloku z użyciem block hash + number ---
+    // TRX: saldo na konkretnym bloku z użyciem block hash + number
     suspend fun getTrxBalanceAt(addressBase58: String, blockNumber: Long): BigInteger {
         val hash = getBlockHash(blockNumber)
 
@@ -75,7 +75,19 @@ class TronGridClient(
             .bodyToMono(Map::class.java)
             .awaitSingleOrNull()
 
-        val balance = (resp?.get("balance") as? Number)?.toLong() ?: 0L
+        if (resp == null) {
+            log.warn("Brak odpowiedzi z węzła dla adresu $addressBase58")
+            return BigInteger.ZERO
+        }
+
+        // API Node'a zwraca 'balance' tylko jeśli jest > 0.
+        // Czasem zwraca błąd w JSON, np. {"Error": "..."}
+        if (resp.containsKey("Error")) {
+            log.error("Błąd z API Tron: ${resp["Error"]}")
+            throw RuntimeException("Tron Node Error: ${resp["Error"]}")
+        }
+
+        val balance = (resp["balance"] as? Number)?.toLong() ?: 0L
         return BigInteger.valueOf(balance)
     }
 
@@ -104,18 +116,6 @@ class TronGridClient(
         val hash = resp?.get("blockID") as? String
         require(!hash.isNullOrBlank()) { "Nie udało się pobrać hash dla bloku $blockNumber" }
         return hash
-    }
-
-    /// Saldo TRX (w SUN) - bieżące (pozostawione dla kompatybilności)
-    suspend fun getTrxBalance(addressBase58: String): BigInteger {
-        val resp = webGrid.get()
-            .uri("/v1/accounts/{addr}", addressBase58)
-            .retrieve()
-            .bodyToMono(Map::class.java)
-            .awaitSingleOrNull()
-
-        val balance = (resp?.get("balance") as? Number)?.toLong() ?: 0L
-        return BigInteger.valueOf(balance)
     }
 
     // Saldo TRC20 przez /wallet/triggerconstantcontract -> hex -> BigInteger (bieżący stan)
