@@ -10,12 +10,11 @@ CREATE TABLE IF NOT EXISTS trx.transaction_address_amount (
     token_name text,
     block_number bigint,
     tx_hash text,
-    amount_delta varint,    -- w najmniejszych jednostkach (TRX/USDT -> 1e-6)
-    block_ts timestamp,
+    amount_delta varint,
     PRIMARY KEY ((chain, address, token_name), block_number, tx_hash)
 ) WITH CLUSTERING ORDER BY (block_number ASC, tx_hash ASC);
 
--- Rozjazdy: snapshot per blok (szybkie listowanie "top N")
+-- Rozjazdy:
 CREATE TABLE IF NOT EXISTS trx.balance_mismatch_by_block (
     chain text,
     block_h bigint,
