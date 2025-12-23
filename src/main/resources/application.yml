@@ -4,7 +4,6 @@ app:
 
   # LISTA portfeli do zsumowania gdy wywołanie o ALL
   wallets:
-    - mt-ZUZIAWAL-NILETES-6985
     - PROD-TRON-1
     - PROD-TRON-2
 

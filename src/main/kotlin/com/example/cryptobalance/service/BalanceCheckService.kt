@@ -34,9 +34,11 @@ private fun parseTokens(src: String): Map<String, String?> =
 class BalanceCheckService(
     private val repo: TxRepository,
     private val tron: TronGridClient,
+    private val mismatchRepo: com.example.cryptobalance.repo.MismatchRepository,
     @Value("\${app.wallet-name:TRON}") private val walletName: String,
     @Value("\${app.tokens:TRX}") tokensProp: String
-) {
+)
+ {
     private val log = org.slf4j.LoggerFactory.getLogger(BalanceCheckService::class.java)
     private val tokens: Map<String, String?> = parseTokens(tokensProp)
 
@@ -51,6 +53,17 @@ class BalanceCheckService(
             else -> tron.getTrc20Balance(contract, address)          // TRC20 (bieżący stan)
         }
         val delta = onchain.subtract(system)
+
+        mismatchRepo.persistMismatch(
+            chain = walletName,
+            blockH = blockNumber,
+            address = address,
+            tokenName = sym,
+            systemBalance = system,
+            onchainBalance = onchain
+        )
+
         return DiffResponse(walletName, address, sym, blockNumber, system, onchain, delta)
+
     }
 }
