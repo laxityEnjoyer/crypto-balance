@@ -6,21 +6,30 @@ import org.springframework.stereotype.Component
 import java.math.BigInteger
 
 /**
- * trx.transaction_address_amount(
- *  chain text,
- *  address text,
- *  token_name text,
- *  block_number bigint,
- *  tx_hash text,
- *  amount_delta varint,
- *  block_ts timestamp,
- *  PRIMARY KEY ((chain, address, token_name), block_number, tx_hash)
- * )
+ * Repository for reading transaction delta records from Cassandra.
+ *
+ * Maps to the `trx.transaction_address_amount` table:
+ * ```
+ * CREATE TABLE trx.transaction_address_amount (
+ *   chain      text,
+ *   address    text,
+ *   token_name text,
+ *   block_number bigint,
+ *   tx_hash    text,
+ *   amount_delta varint,
+ *   PRIMARY KEY ((chain, address, token_name), block_number, tx_hash)
+ * ) WITH CLUSTERING ORDER BY (block_number ASC, tx_hash ASC);
+ * ```
+ * The partition key `(chain, address, token_name)` ensures all deltas for a given
+ * address/token pair are co-located, making range scans by block height efficient.
  */
 @Component
 class TxRepository(private val sess: CqlSession) {
 
-    // Pobieramy delty do wskazanego bloku w obrębie jednej partycji (chain+address+token_name)
+    /**
+     * Prepared statement: selects all [amount_delta] values within a single partition
+     * up to and including the specified block number.
+     */
     private val deltasUpToBlockStmt: PreparedStatement = sess.prepare(
         """
         SELECT amount_delta
@@ -29,6 +38,16 @@ class TxRepository(private val sess: CqlSession) {
         """.trimIndent()
     )
 
+    /**
+     * Computes the off-chain balance for an [address]/[token] pair by summing all
+     * [amount_delta] values recorded up to [upToBlock] (inclusive).
+     *
+     * @param chain     Logical chain identifier (e.g. "TRON").
+     * @param address   TRON base58-encoded wallet address.
+     * @param token     Token symbol in uppercase (e.g. "TRX", "USDT").
+     * @param upToBlock Upper block height bound for the aggregation.
+     * @return Accumulated balance as [BigInteger]. Returns [BigInteger.ZERO] if no records exist.
+     */
     fun sumAmountForAddress(
         chain: String,
         address: String,
