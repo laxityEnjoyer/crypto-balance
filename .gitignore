@@ -40,3 +40,6 @@ out/
 .kotlin
 secrets.properties
 src/main/resources/secrets.properties
+
+### Local environment ###
+*.local.properties
