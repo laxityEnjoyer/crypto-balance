@@ -1,156 +1,173 @@
-README — instrukcja uruchomienia i demonstracji projektu
-========================================================
+README — Setup and Demonstration Guide
+=======================================
 
-Nazwa projektu
---------------
-crypto-balance — moduł monitorowania i weryfikacji sald tokenów w sieci TRON
-
-Cel i zakres
+Project Name
 ------------
-Celem projektu jest demonstracja działania wyspecjalizowanej usługi, która umożliwia:
-1) wyliczenie salda off-chain na podstawie danych zdarzeniowych zapisanych w bazie Apache Cassandra,
-2) pobranie odpowiadającego salda on-chain z sieci TRON za pośrednictwem API TronGrid,
-3) porównanie obu wartości oraz rejestrację wyniku w bazie danych w celu dalszej analizy (w tym analizy historycznej).
+crypto-balance — Off-chain / On-chain balance reconciliation module for the TRON network
 
-Przyjęto następujące założenia:
-• saldo off-chain jest obliczane jako suma zmian (delt) do wskazanego numeru bloku (parametr block_number),
-• saldo on-chain pobierane jest z TRON:
-  - dla TRX możliwy jest odczyt stanu z odniesieniem do numeru bloku,
-  - dla tokenów TRC20 (np. USDT) zastosowano odczyt stanu bieżącego (ograniczenie opisane w pracy).
+Purpose and Scope
+-----------------
+This service demonstrates a specialised reconciliation component that:
 
-Projekt nie realizuje pełnego cyklu obsługi płatności (np. generowania adresów depozytowych, księgowania wpłat,
-inicjowania wypłat), a stanowi komponent kontrolny wspierający proces rekoncyliacji danych off-chain i on-chain.
+1. Computes an off-chain balance from event-sourced transaction deltas stored in Apache Cassandra.
+2. Fetches the corresponding on-chain balance from the TRON network via the TronGrid API.
+3. Compares both values, records the result in audit tables, and exposes it via a REST API.
+
+Key design decisions:
+  - Off-chain balances are derived by summing amount_delta records up to a specified block_number.
+  - On-chain balance retrieval differs by token type:
+      TRX (native coin): historical balance at the exact block, using block hash resolution.
+      TRC-20 tokens (e.g. USDT): current contract balance — historical queries are not
+      supported by the TronGrid API; this limitation is documented in the thesis.
+  - Audit records are written to two denormalised Cassandra tables for efficient lookups
+    by block height and by wallet address.
+
+This module does not implement a full payment gateway lifecycle (address provisioning,
+deposit ingestion, withdrawal initiation). It is a control component that supports the
+off-chain / on-chain reconciliation process described in the thesis.
 
 
-Wymagania środowiskowe
-----------------------
-• Java 17
-• Docker oraz Docker Compose
-• Dostęp do Internetu 
+Environment Requirements
+------------------------
+  - Java 17
+  - Docker and Docker Compose
+  - Internet access (required for TronGrid API calls)
 
 
-Uruchomienie środowiska (Cassandra)
------------------------------------
-1) Uruchomienie kontenera z Apache Cassandra
-   W katalogu głównym projektu uruchomić:
+Starting the Environment (Cassandra)
+--------------------------------------
+1) Start the Cassandra container
+   From the project root directory run:
+
    docker compose up -d
 
-   Kontener: cassandra-trx
-   Port CQL: 9042 (udostępniony na hoście)
+   Container name : cassandra-trx
+   CQL port       : 9042 (exposed on the host)
 
-2) Utworzenie schematu bazy danych (keyspace + tabele)
-   Uwaga: aplikacja zakłada istnienie keyspace przed startem (konfiguracja sterownika Cassandra).
+2) Create the database schema (keyspace + tables)
+   Note: the application expects the keyspace to exist before startup
+   (required by the Cassandra driver session binding).
 
    docker exec -i cassandra-trx cqlsh < schema_full.cql
 
-3) Wprowadzenie danych przykładowych (seed)
-   Skrypt seed umożliwia przeprowadzenie demonstracji obliczania salda off-chain oraz porównania z on-chain:
+3) Load the seed data
+   The seed script inserts representative transaction records that allow
+   demonstrating off-chain balance calculation and on-chain comparison:
 
    docker exec -i cassandra-trx cqlsh < seed_transactions_real.cql
 
 
-Konfiguracja dostępu do TronGrid
+TronGrid API Key Configuration
 --------------------------------
-Aplikacja wymaga ustawienia klucza API TronGrid jako właściwości: tron.apiKey.
+The application requires a TronGrid API key set as the property: tron.apiKey
 
-W projekcie wykorzystano mechanizm:
-spring.config.import=optional:classpath:secrets.properties
+The project uses the following import mechanism:
+  spring.config.import=optional:classpath:secrets.properties
 
-Rekomendowana konfiguracja lokalna:
-1) Utworzyć plik:
-   src/main/resources/secrets.properties
-2) Wpisać w nim:
-   tron.apiKey=YOUR_TRONGRID_API_KEY
-
-Uruchomienie aplikacji
-----------------------
-W katalogu głównym projektu:
-./gradlew bootRun
-
-Domyślny adres usługi:
-http://localhost:8080
+Recommended local setup:
+  1) Create the file:
+       src/main/resources/secrets.properties
+  2) Add the following line:
+       tron.apiKey=YOUR_TRONGRID_API_KEY
 
 
-Interfejs API (scenariusze demonstracyjne)
-------------------------------------------
-W scenariuszach demonstracyjnych wykorzystywany jest parametr:
-block_number — numer bloku, do którego wyliczane jest saldo off-chain.
+Running the Application
+------------------------
+From the project root directory:
 
-1) Wyliczenie salda off-chain dla adresu (zestaw tokenów)
+  ./gradlew bootRun
+
+Default service address:
+  http://localhost:8080
+
+
+REST API — Demonstration Scenarios
+------------------------------------
+All endpoints accept block_number as a query parameter. It defines the upper block height
+bound used for off-chain delta aggregation.
+
+1) Off-chain balance for an address (all supported tokens)
    GET /system/{address}?block_number=78757599
 
-   Przykład:
-   curl "http://localhost:8080/system/TWOJ_ADRES?block_number=78757599"
+   Example:
+   curl "http://localhost:8080/system/YOUR_ADDRESS?block_number=78757599"
 
-2) Wyliczenie salda off-chain dla adresu i wskazanego tokenu
+2) Off-chain balance for a specific token
    GET /system/{address}/{token}?block_number=78757599
 
-   Przykład:
-   curl "http://localhost:8080/system/TWOJ_ADRES/USDT?block_number=78757599"
+   Example:
+   curl "http://localhost:8080/system/YOUR_ADDRESS/USDT?block_number=78757599"
 
-3) Porównanie salda off-chain z on-chain oraz zapis wyniku do bazy
+3) Reconciliation check (off-chain vs. on-chain) with audit record persistence
    GET /wallet/{address}/{token}?block_number=78757599
 
-   Przykład:
-   curl "http://localhost:8080/wallet/TWOJ_ADRES/USDT?block_number=78757599"
+   Example:
+   curl "http://localhost:8080/wallet/YOUR_ADDRESS/USDT?block_number=78757599"
 
-   Działanie endpointu:
-   • obliczenie salda systemowego (off-chain) na podstawie delt zapisanych w Cassandrze,
-   • pobranie salda on-chain przez TronGrid (TRX na bloku / TRC20 jako stan bieżący),
-   • obliczenie różnicy (delta) oraz zapis wyniku do tabel kontrolnych,
-   • zwrócenie odpowiedzi JSON zawierającej podsumowanie porównania.
-
-
-Konfiguracja aplikacji (application.yml)
-----------------------------------------
-Najistotniejsze parametry:
-• app.wallet-name  — identyfikator łańcucha zapisywany w bazie (domyślnie: TRON)
-• app.tokens       — lista tokenów obsługiwanych przez moduł weryfikacji:
-  "TRX,USDT:TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t"
-
-• cassandra.contactPoint — 127.0.0.1:9042
-• cassandra.keyspace     — trx
-• cassandra.localDc      — datacenter1
-
-• tron.baseUrl, tron.trxBaseUrl — adresy API wykorzystywane do odczytu danych on-chain
+   Endpoint behaviour:
+     - Reads the system (off-chain) balance from Cassandra delta records.
+     - Fetches the on-chain balance via TronGrid (TRX at block / TRC-20 current state).
+     - Computes the delta (onchain − system) and writes the audit record to Cassandra.
+     - Returns a JSON response with both balances and their difference.
 
 
-Weryfikacja danych w bazie Cassandra
-------------------------------------
-Wejście do konsoli CQL:
-docker exec -it cassandra-trx cqlsh
+Application Configuration (application.yml)
+---------------------------------------------
+Key configuration properties:
 
-Wybrane tabele:
-• trx.transaction_address_amount
-  Dane zdarzeniowe (delty) wykorzystywane do obliczeń off-chain.
+  app.wallet-name  — chain identifier written to Cassandra (default: TRON)
+  app.tokens       — comma-separated list of supported tokens with optional contract addresses:
+                     "TRX,USDT:TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t"
 
-• trx.balance_mismatch_by_block
-• trx.balance_mismatch_by_address
-  Tabele wyników kontroli (rozbieżności) umożliwiające analizę po bloku i po adresie.
+  cassandra.contactPoint — host:port of the Cassandra node (default: 127.0.0.1:9042)
+  cassandra.keyspace     — target keyspace (default: trx)
+  cassandra.localDc      — local datacenter name for the driver (default: datacenter1)
 
-Przykładowe zapytanie:
-SELECT * FROM trx.balance_mismatch_by_address
-WHERE chain='TRON' AND address='TWOJ_ADRES'
-LIMIT 20;
+  tron.baseUrl    — TronGrid API base URL (default: https://api.trongrid.io)
+  tron.trxBaseUrl — Full-node URL for historical TRX balance queries (defaults to tron.baseUrl)
 
 
-Najczęstsze problemy i ich rozwiązania
---------------------------------------
-1) Komunikat: “Keyspace does not exist”
-   Rozwiązanie: ponownie wykonać inicjalizację schematu:
+Inspecting the Cassandra Audit Tables
+---------------------------------------
+Enter the CQL shell:
+  docker exec -it cassandra-trx cqlsh
+
+Relevant tables:
+
+  trx.transaction_address_amount
+    Event-sourced delta records used for off-chain balance calculation.
+
+  trx.balance_mismatch_by_block
+    Reconciliation results indexed by block height.
+    Clustering by abs_delta DESC surfaces the largest discrepancies first.
+
+  trx.balance_mismatch_by_address
+    Reconciliation results indexed by wallet address.
+    Provides a chronological audit trail per address.
+
+Example query:
+  SELECT * FROM trx.balance_mismatch_by_address
+  WHERE chain='TRON' AND address='YOUR_ADDRESS'
+  LIMIT 20;
+
+
+Common Issues and Resolutions
+-------------------------------
+1) Error: "Keyspace does not exist"
+   Re-apply the schema initialisation:
    docker exec -i cassandra-trx cqlsh < schema_full.cql
 
-2) Odpowiedzi 403 / ograniczenia TronGrid (rate limit)
-   Przyczyna: brak lub niepoprawny klucz tron.apiKey.
-   Rozwiązanie: skonfigurować tron.apiKey zgodnie z sekcją “Konfiguracja dostępu do TronGrid”.
+2) HTTP 403 / TronGrid rate limit exceeded
+   Cause: missing or invalid tron.apiKey.
+   Resolution: configure tron.apiKey as described in the "TronGrid API Key Configuration" section.
 
-3) Brak połączenia z Cassandrą
-   Sprawdzić:
-   • czy kontener cassandra-trx działa,
-   • czy port 9042 jest dostępny,
-   • czy contactPoint w application.yml wskazuje właściwy adres/port.
+3) Cannot connect to Cassandra
+   Check:
+     - The cassandra-trx container is running: docker ps
+     - Port 9042 is accessible on the host.
+     - cassandra.contactPoint in application.yml points to the correct host and port.
 
-4) Interpretacja wyników dla tokenów TRC20
-   Uwaga: dla TRC20 zastosowano odczyt stanu bieżącego, a nie historycznego na block_number.
-   Konsekwencją jest możliwość wystąpienia różnic wynikających z natury dostępnych endpointów API,
-   co należy uwzględnić podczas analizy wyników (opisano w części teoretycznej i projektowej pracy).
+4) TRC-20 balance discrepancies
+   Note: TRC-20 balances are fetched as the current on-chain state, not the historical state
+   at block_number. Differences may therefore arise from transactions that occurred after the
+   specified block. This limitation is described in the thesis.
