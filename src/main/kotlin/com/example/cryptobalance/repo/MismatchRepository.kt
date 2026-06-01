@@ -7,6 +7,19 @@ import java.math.BigInteger
 import java.time.Instant
 import java.util.UUID
 
+/**
+ * Repository responsible for persisting reconciliation audit records.
+ *
+ * Records are written to two denormalised Cassandra tables to support
+ * efficient querying by either block height or wallet address:
+ *
+ * - `trx.balance_mismatch_by_block`   — partitioned by `(chain, block_h)`;
+ *   clustering by `abs_delta DESC` surfaces the largest discrepancies first.
+ * - `trx.balance_mismatch_by_address` — partitioned by `(chain, address)`;
+ *   clustering by `block_h DESC` provides a chronological audit trail per address.
+ *
+ * Records with a zero delta (balances in sync) are silently skipped.
+ */
 @Component
 class MismatchRepository(private val sess: CqlSession) {
 
@@ -28,6 +41,24 @@ class MismatchRepository(private val sess: CqlSession) {
         """.trimIndent()
     )
 
+    /**
+     * Persists a reconciliation result to both audit tables.
+     *
+     * If [onchainBalance] equals [systemBalance] (delta = 0), the record is not written —
+     * only actual discrepancies are stored for auditability.
+     *
+     * Both inserts share the same [runId] so that records from a single reconciliation
+     * run can be correlated across tables.
+     *
+     * @param chain          Logical chain identifier (e.g. "TRON").
+     * @param blockH         Block height at which the reconciliation was performed.
+     * @param address        TRON base58-encoded wallet address.
+     * @param tokenName      Token symbol (will be uppercased).
+     * @param systemBalance  Off-chain balance from Cassandra delta aggregation.
+     * @param onchainBalance On-chain balance from the TRON network.
+     * @param checkedAt      Timestamp of the reconciliation run (defaults to now).
+     * @param runId          Unique identifier for this reconciliation run (defaults to random UUID).
+     */
     fun persistMismatch(
         chain: String,
         blockH: Long,
@@ -54,7 +85,7 @@ class MismatchRepository(private val sess: CqlSession) {
                 systemBalance,
                 onchainBalance,
                 delta,
-                checkedAt,   // <-- Instant, NIE Date
+                checkedAt,
                 runId
             )
         )
@@ -68,7 +99,7 @@ class MismatchRepository(private val sess: CqlSession) {
                 systemBalance,
                 onchainBalance,
                 delta,
-                checkedAt,   // <-- Instant, NIE Date
+                checkedAt,
                 runId
             )
         )
